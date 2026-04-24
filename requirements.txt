@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+kafka-python
+pandas
+scikit-learn
+xgboost
+mlflow
