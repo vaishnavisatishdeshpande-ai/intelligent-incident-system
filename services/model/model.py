@@ -28,15 +28,24 @@ class AnomalyModel:
         self.trained = True
 
     def predict(self, features):
-        """Predict anomaly or normal."""
-        if not self.trained:
-            return "NOT_READY"
+        """Predict anomaly with adjustable threshold"""
 
-        vector = np.array([[
+        if not self.trained:
+            return {"prediction": "NOT_READY", "confidence": 0.0}
+
+        vector = [[
             features["avg_latency"],
             features["error_rate"]
-        ]])
+        ]]
 
-        result = self.model.predict(vector)
+        prob = self.model.predict_proba(vector)[0][1]
 
-        return "ANOMALY" if result[0] == -1 else "NORMAL"
+        # 🔥 Controlled threshold (key change)
+        threshold = 0.7
+
+        prediction = "ANOMALY" if prob > threshold else "NORMAL"
+
+        return {
+            "prediction": prediction,
+            "confidence": round(prob, 2)
+        }

@@ -1,7 +1,7 @@
 class IncidentScorer:
     """Combines multiple signals into a single incident score."""
 
-    def compute_score(self, features, alerts, ml_prediction):
+    def compute_score(self, features, alerts, ml_prediction, confidence):
         score = 0
 
         # --- Latency contribution ---
@@ -21,9 +21,8 @@ class IncidentScorer:
         # --- Rule alerts ---
         score += len(alerts) * 2
 
-        # --- ML contribution ---
         if ml_prediction == "ANOMALY":
-            score += 3
+            score += int(confidence * 5)
 
         return score
 

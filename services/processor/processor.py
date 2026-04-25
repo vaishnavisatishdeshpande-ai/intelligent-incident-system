@@ -19,6 +19,9 @@ EVENTS_PROCESSED = Counter("events_processed_total", "Total events processed")
 ALERTS_TRIGGERED = Counter("alerts_triggered_total", "Total alerts triggered")
 ML_ANOMALIES = Counter("ml_anomalies_total", "Total ML anomalies detected")
 
+ML_ONLY_ALERTS = Counter("ml_only_alerts_total", "ML-only alerts triggered")
+SUPPRESSED_ML = Counter("ml_suppressed_total", "ML anomalies suppressed")
+
 LATENCY_GAUGE = Gauge("avg_latency", "Average latency")
 ERROR_RATE_GAUGE = Gauge("error_rate", "Error rate")
 
@@ -116,10 +119,27 @@ class AnomalyDetector:
         # --- RECOVERY ---
         resolved = self.active_alerts - current_alerts
         for alert_type in resolved:
-            alerts.append({"type": alert_type, "status": "RESOLVED"})
+            alerts.append({
+                "type": alert_type,
+                "status": "RESOLVED"
+            })
 
         self.active_alerts = current_alerts
         return alerts
+
+
+# ================================
+# 🎯 ACTION LAYER
+# ================================
+
+def determine_action(severity):
+    if severity == "CRITICAL":
+        return "ESCALATE_TO_ONCALL"
+    elif severity == "HIGH":
+        return "TRIGGER_ALERT"
+    elif severity == "MEDIUM":
+        return "LOG_AND_MONITOR"
+    return "NO_ACTION"
 
 
 # ================================
@@ -148,7 +168,7 @@ def main():
     engine = FeatureEngine()
     detector = AnomalyDetector()
     model = AnomalyModel()
-    scorer = IncidentScorer()  # 🔥 NEW
+    scorer = IncidentScorer()
 
     for message in consumer:
         event = message.value
@@ -165,45 +185,82 @@ def main():
         LATENCY_GAUGE.set(features["avg_latency"])
         ERROR_RATE_GAUGE.set(features["error_rate"])
 
-        # --- RULE ALERTS ---
+        # ================================
+        # 🚨 RULE DETECTION
+        # ================================
         alerts = detector.detect(features)
 
-        # --- ML ---
+        # ================================
+        # 🤖 ML PROCESSING
+        # ================================
         model.add_data(features)
         model.train()
 
-        prediction = model.predict(features)
+        ml_result = model.predict(features)
+        prediction = ml_result["prediction"]
+        confidence = ml_result["confidence"]
+
+        print("ML Prediction:", prediction, "| confidence:", confidence)
 
         final_alerts = [a.copy() for a in alerts]
 
-        # --- ML FUSION ---
+        # ================================
+        # 🔀 ML + RULE FUSION
+        # ================================
         if prediction == "ANOMALY":
             ML_ANOMALIES.inc()
 
             if not alerts:
-                final_alerts.append({
-                    "type": "ML_ONLY_ANOMALY",
-                    "severity": "HIGH",
-                    "details": features,
-                })
+                if confidence > 0.7:
+                    ML_ONLY_ALERTS.inc()
+
+                    final_alerts.append({
+                        "type": "ML_ONLY_ANOMALY",
+                        "severity": "HIGH",
+                        "confidence": confidence,
+                        "details": features,
+                    })
+                else:
+                    SUPPRESSED_ML.inc()
+                    print(f"ML anomaly suppressed (low confidence): {confidence}")
+
             else:
                 for alert in final_alerts:
                     alert["ml_confirmed"] = True
 
-        # --- 🔥 INCIDENT SCORING ---
-        score = scorer.compute_score(features, final_alerts, prediction)
-        severity = scorer.get_severity(score)
+        # ================================
+        # 📊 SCORING + DECISION
+        # ================================
+        score = scorer.compute_score(
+            features,
+            final_alerts,
+            prediction,
+            confidence
+        )
 
+        severity = scorer.get_severity(score)
+        action = determine_action(severity)
+
+        # ================================
+        # 📦 FINAL INCIDENT
+        # ================================
         incident = {
             "score": score,
             "severity": severity,
+            "action": action,
             "features": features,
             "alerts": final_alerts,
+            "ml_signal": {
+                "prediction": prediction,
+                "confidence": confidence,
+            },
         }
 
         print("🔥 INCIDENT:", incident)
 
-        # --- FINAL ALERT OUTPUT ---
+        # ================================
+        # 🚨 ALERT OUTPUT
+        # ================================
         if final_alerts:
             ALERTS_TRIGGERED.inc()
             print("🚨 FINAL ALERT:", final_alerts)
