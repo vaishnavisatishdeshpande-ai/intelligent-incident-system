@@ -1,68 +1,77 @@
 from collections import deque
 import json
-from services.model.model import AnomalyModel
 
 from kafka import KafkaConsumer
+from prometheus_client import start_http_server, Counter, Gauge
 
+from services.processor.incident import IncidentScorer
+from services.model.model import AnomalyModel
 from services.producer.config import (
     KAFKA_BOOTSTRAP_SERVERS,
     KAFKA_TOPIC,
 )
 
+# ================================
+# 📊 METRICS
+# ================================
+
+EVENTS_PROCESSED = Counter("events_processed_total", "Total events processed")
+ALERTS_TRIGGERED = Counter("alerts_triggered_total", "Total alerts triggered")
+ML_ANOMALIES = Counter("ml_anomalies_total", "Total ML anomalies detected")
+
+LATENCY_GAUGE = Gauge("avg_latency", "Average latency")
+ERROR_RATE_GAUGE = Gauge("error_rate", "Error rate")
+
 WINDOW_SIZE = 10
 
 
-class FeatureEngine:
-    """Processes incoming events and computes aggregated features."""
+# ================================
+# ⚙️ FEATURE ENGINE
+# ================================
 
+class FeatureEngine:
     def __init__(self):
         self.events = deque(maxlen=WINDOW_SIZE)
 
     def add_event(self, event):
-        """Add a new event to the sliding window."""
         self.events.append(event)
 
     def compute_features(self):
-        """Compute average latency and error rate."""
         if not self.events:
             return None
 
-        latencies = [event["latency"] for event in self.events]
-        errors = [event["error"] for event in self.events]
-
-        avg_latency = sum(latencies) / len(latencies)
-        error_rate = sum(errors) / len(errors)
+        latencies = [e["latency"] for e in self.events]
+        errors = [e["error"] for e in self.events]
 
         return {
-            "avg_latency": avg_latency,
-            "error_rate": error_rate,
+            "avg_latency": sum(latencies) / len(latencies),
+            "error_rate": sum(errors) / len(errors),
         }
 
 
-class AnomalyDetector:
-    """Detects anomalies based on thresholds and assigns severity."""
+# ================================
+# 🚨 RULE-BASED DETECTOR
+# ================================
 
+class AnomalyDetector:
     def __init__(self, latency_threshold=300, error_threshold=0.3):
         self.latency_threshold = latency_threshold
         self.error_threshold = error_threshold
+
         self.active_alerts = set()
+
         self.latency_breach_count = 0
         self.error_breach_count = 0
         self.breach_threshold = 3
 
     def detect(self, features):
-        """Return alerts with severity, deduplication, and recovery handling."""
         alerts = []
         current_alerts = set()
-
-        if not features:
-            return alerts
 
         avg_latency = features.get("avg_latency")
         error_rate = features.get("error_rate")
 
-        # --- Latency detection ---
-        # --- Latency detection (with stability) ---
+        # --- LATENCY ---
         if avg_latency is not None:
             if avg_latency > self.latency_threshold:
                 self.latency_breach_count += 1
@@ -77,17 +86,13 @@ class AnomalyDetector:
                 current_alerts.add("HIGH_LATENCY")
 
                 if "HIGH_LATENCY" not in self.active_alerts:
-                    alerts.append(
-                        {
-                            "type": "HIGH_LATENCY",
-                            "severity": severity,
-                            "value": avg_latency,
-                            "threshold": self.latency_threshold,
-                        }
-                    )
+                    alerts.append({
+                        "type": "HIGH_LATENCY",
+                        "severity": severity,
+                        "value": avg_latency,
+                    })
 
-        # --- Error rate detection ---
-        # --- Error rate detection (with stability) ---
+        # --- ERROR RATE ---
         if error_rate is not None:
             if error_rate > self.error_threshold:
                 self.error_breach_count += 1
@@ -102,99 +107,106 @@ class AnomalyDetector:
                 current_alerts.add("HIGH_ERROR_RATE")
 
                 if "HIGH_ERROR_RATE" not in self.active_alerts:
-                    alerts.append(
-                        {
-                            "type": "HIGH_ERROR_RATE",
-                            "severity": severity,
-                            "value": error_rate,
-                            "threshold": self.error_threshold,
-                        }
-                    )
-        # --- Recovery detection (FIXED: no duplication) ---
-        resolved_alerts = self.active_alerts - current_alerts
+                    alerts.append({
+                        "type": "HIGH_ERROR_RATE",
+                        "severity": severity,
+                        "value": error_rate,
+                    })
 
-        for alert_type in resolved_alerts:
-            alerts.append(
-                {
-                    "type": alert_type,
-                    "status": "RESOLVED",
-                }
-            )
+        # --- RECOVERY ---
+        resolved = self.active_alerts - current_alerts
+        for alert_type in resolved:
+            alerts.append({"type": alert_type, "status": "RESOLVED"})
 
-        # --- Update state ---
         self.active_alerts = current_alerts
-
         return alerts
 
+
+# ================================
+# 🔌 KAFKA
+# ================================
+
 def create_consumer():
-    """Create Kafka consumer for system events."""
     return KafkaConsumer(
         KAFKA_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda message: json.loads(message.decode("utf-8")),
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         auto_offset_reset="earliest",
     )
 
 
+# ================================
+# 🚀 MAIN PIPELINE
+# ================================
+
 def main():
-    """Main processing loop."""
-    print("Starting processor...")
+    print("🚀 Starting processor...")
+
+    start_http_server(8000)
 
     consumer = create_consumer()
     engine = FeatureEngine()
     detector = AnomalyDetector()
     model = AnomalyModel()
+    scorer = IncidentScorer()  # 🔥 NEW
 
     for message in consumer:
         event = message.value
         print("Received event:", event)
 
+        EVENTS_PROCESSED.inc()
+
         engine.add_event(event)
         features = engine.compute_features()
 
-        if features:
-            print("Computed features:", features)
+        if not features:
+            continue
 
-            # Rule-based alerts
-            alerts = detector.detect(features)
+        LATENCY_GAUGE.set(features["avg_latency"])
+        ERROR_RATE_GAUGE.set(features["error_rate"])
 
-            if alerts:
-                print("ALERT:", alerts)
+        # --- RULE ALERTS ---
+        alerts = detector.detect(features)
 
-            # ML pipeline
-            model.add_data(features)
-            model.train()
+        # --- ML ---
+        model.add_data(features)
+        model.train()
 
-            prediction = model.predict(features)
-            print("ML Prediction:", prediction)
-            final_alerts = [alert.copy() for alert in alerts]
+        prediction = model.predict(features)
 
-            # --- Smart ML fusion ---
-            if prediction == "ANOMALY":
+        final_alerts = [a.copy() for a in alerts]
 
-                # Case 1: ML detects anomaly but rules don't → weak signal
-                if not alerts:
-                    severity = "LOW"
+        # --- ML FUSION ---
+        if prediction == "ANOMALY":
+            ML_ANOMALIES.inc()
 
-                    if features["error_rate"] > 0.6 or features["avg_latency"] > 400:
-                        severity = "HIGH"
+            if not alerts:
+                final_alerts.append({
+                    "type": "ML_ONLY_ANOMALY",
+                    "severity": "HIGH",
+                    "details": features,
+                })
+            else:
+                for alert in final_alerts:
+                    alert["ml_confirmed"] = True
 
-                    final_alerts.append(
-                        {
-                            "type": "ML_ONLY_ANOMALY",
-                            "severity": severity,
-                            "details": features,
-                        }
-                    )
+        # --- 🔥 INCIDENT SCORING ---
+        score = scorer.compute_score(features, final_alerts, prediction)
+        severity = scorer.get_severity(score)
 
-                # Case 2: ML + Rule both detect → strong signal
-                else:
-                    for alert in final_alerts:
-                        alert["ml_confirmed"] = True
+        incident = {
+            "score": score,
+            "severity": severity,
+            "features": features,
+            "alerts": final_alerts,
+        }
 
-            # --- Print final alerts ---
-            if final_alerts:
-                print("🚨 FINAL ALERT:", final_alerts)
+        print("🔥 INCIDENT:", incident)
+
+        # --- FINAL ALERT OUTPUT ---
+        if final_alerts:
+            ALERTS_TRIGGERED.inc()
+            print("🚨 FINAL ALERT:", final_alerts)
 
 
 if __name__ == "__main__":

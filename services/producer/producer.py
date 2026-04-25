@@ -3,6 +3,7 @@ import json
 import time
 import random
 
+
 from services.producer.config import KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC, SERVICE_NAME
 
 
@@ -15,13 +16,39 @@ def create_producer():
     print("Producer created")
     return producer
 
-
+counter = 0
 def build_event():
-    print("Building event...")
+    global counter
+
+    phase = (counter // 50) % 4
+    counter += 1
+
+    # --- Phase 0: Normal ---
+    if phase == 0:
+        latency = random.randint(50, 150)
+        error = random.choice([0, 0, 0, 1])  # mostly no errors
+
+    # --- Phase 1: Degradation ---
+    elif phase == 1:
+        latency = random.randint(150, 350)
+        error = random.choice([0, 1])
+
+    # --- Phase 2: Incident ---
+    elif phase == 2:
+        latency = random.randint(400, 600)
+        error = random.choice([0, 1, 1])  # more errors
+
+    # --- Phase 3: Recovery ---
+    else:
+        latency = random.randint(80, 200)
+        error = random.choice([0, 0, 1])
+
+    print(f"PHASE: {phase}")
+
     return {
-        "service": SERVICE_NAME,
-        "latency": 120,
-        "error": 0
+        "service": "payments-api",
+        "latency": latency,
+        "error": error,
     }
 
 
