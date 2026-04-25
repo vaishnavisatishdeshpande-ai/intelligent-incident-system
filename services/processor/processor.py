@@ -37,19 +37,24 @@ class FeatureEngine:
         self.events = deque(maxlen=WINDOW_SIZE)
 
     def add_event(self, event):
+        if not isinstance(event, dict):
+            return
         self.events.append(event)
 
     def compute_features(self):
         if not self.events:
             return None
 
-        latencies = [e["latency"] for e in self.events]
-        errors = [e["error"] for e in self.events]
+        try:
+            latencies = [e.get("latency", 0) for e in self.events]
+            errors = [e.get("error", 0) for e in self.events]
 
-        return {
-            "avg_latency": sum(latencies) / len(latencies),
-            "error_rate": sum(errors) / len(errors),
-        }
+            return {
+                "avg_latency": sum(latencies) / len(latencies),
+                "error_rate": sum(errors) / len(errors),
+            }
+        except Exception:
+            return None
 
 
 # ================================
@@ -62,7 +67,6 @@ class AnomalyDetector:
         self.error_threshold = error_threshold
 
         self.active_alerts = set()
-
         self.latency_breach_count = 0
         self.error_breach_count = 0
         self.breach_threshold = 3
@@ -74,18 +78,16 @@ class AnomalyDetector:
         avg_latency = features.get("avg_latency")
         error_rate = features.get("error_rate")
 
-        # --- LATENCY ---
+        # LATENCY
         if avg_latency is not None:
-            if avg_latency > self.latency_threshold:
-                self.latency_breach_count += 1
-            else:
-                self.latency_breach_count = 0
+            self.latency_breach_count = (
+                self.latency_breach_count + 1
+                if avg_latency > self.latency_threshold
+                else 0
+            )
 
             if self.latency_breach_count >= self.breach_threshold:
-                severity = "HIGH"
-                if avg_latency > self.latency_threshold * 1.5:
-                    severity = "CRITICAL"
-
+                severity = "CRITICAL" if avg_latency > self.latency_threshold * 1.5 else "HIGH"
                 current_alerts.add("HIGH_LATENCY")
 
                 if "HIGH_LATENCY" not in self.active_alerts:
@@ -95,18 +97,16 @@ class AnomalyDetector:
                         "value": avg_latency,
                     })
 
-        # --- ERROR RATE ---
+        # ERROR RATE
         if error_rate is not None:
-            if error_rate > self.error_threshold:
-                self.error_breach_count += 1
-            else:
-                self.error_breach_count = 0
+            self.error_breach_count = (
+                self.error_breach_count + 1
+                if error_rate > self.error_threshold
+                else 0
+            )
 
             if self.error_breach_count >= self.breach_threshold:
-                severity = "HIGH"
-                if error_rate > self.error_threshold * 2:
-                    severity = "CRITICAL"
-
+                severity = "CRITICAL" if error_rate > self.error_threshold * 2 else "HIGH"
                 current_alerts.add("HIGH_ERROR_RATE")
 
                 if "HIGH_ERROR_RATE" not in self.active_alerts:
@@ -116,30 +116,51 @@ class AnomalyDetector:
                         "value": error_rate,
                     })
 
-        # --- RECOVERY ---
-        resolved = self.active_alerts - current_alerts
-        for alert_type in resolved:
-            alerts.append({
-                "type": alert_type,
-                "status": "RESOLVED"
-            })
+        # RECOVERY
+        for alert_type in self.active_alerts - current_alerts:
+            alerts.append({"type": alert_type, "status": "RESOLVED"})
 
         self.active_alerts = current_alerts
         return alerts
 
 
 # ================================
-# 🎯 ACTION LAYER
+# 🧠 EXPLAINABILITY
+# ================================
+
+def generate_reason(features):
+    reasons = {}
+
+    latency = features.get("avg_latency", 0)
+    error = features.get("error_rate", 0)
+
+    if latency > 350:
+        reasons["latency"] = {
+            "current": round(latency, 2),
+            "threshold": 350,
+            "status": "HIGH"
+        }
+
+    if error > 0.5:
+        reasons["error_rate"] = {
+            "current": round(error, 2),
+            "threshold": 0.5,
+            "status": "HIGH"
+        }
+
+    return reasons
+
+
+# ================================
+# 🎯 ACTION
 # ================================
 
 def determine_action(severity):
-    if severity == "CRITICAL":
-        return "ESCALATE_TO_ONCALL"
-    elif severity == "HIGH":
-        return "TRIGGER_ALERT"
-    elif severity == "MEDIUM":
-        return "LOG_AND_MONITOR"
-    return "NO_ACTION"
+    return {
+        "CRITICAL": "ESCALATE_TO_ONCALL",
+        "HIGH": "TRIGGER_ALERT",
+        "MEDIUM": "LOG_AND_MONITOR"
+    }.get(severity, "NO_ACTION")
 
 
 # ================================
@@ -161,7 +182,6 @@ def create_consumer():
 
 def main():
     print("🚀 Starting processor...")
-
     start_http_server(8000)
 
     consumer = create_consumer()
@@ -170,100 +190,124 @@ def main():
     model = AnomalyModel()
     scorer = IncidentScorer()
 
-    for message in consumer:
-        event = message.value
-        print("Received event:", event)
+    try:
+        for message in consumer:
+            try:
+                event = message.value
+                EVENTS_PROCESSED.inc()
 
-        EVENTS_PROCESSED.inc()
+                engine.add_event(event)
+                features = engine.compute_features()
 
-        engine.add_event(event)
-        features = engine.compute_features()
+                if not features:
+                    continue
 
-        if not features:
-            continue
+                LATENCY_GAUGE.set(features["avg_latency"])
+                ERROR_RATE_GAUGE.set(features["error_rate"])
 
-        LATENCY_GAUGE.set(features["avg_latency"])
-        ERROR_RATE_GAUGE.set(features["error_rate"])
+                # -------------------------------
+                # RULES
+                # -------------------------------
+                alerts = detector.detect(features)
 
-        # ================================
-        # 🚨 RULE DETECTION
-        # ================================
-        alerts = detector.detect(features)
+                # -------------------------------
+                # ML
+                # -------------------------------
+                model.add_data(features)
+                model.train()
 
-        # ================================
-        # 🤖 ML PROCESSING
-        # ================================
-        model.add_data(features)
-        model.train()
+                ml_result = model.predict(features) or {}
 
-        ml_result = model.predict(features)
-        prediction = ml_result["prediction"]
-        confidence = ml_result["confidence"]
+                prediction = ml_result.get("prediction", "NOT_READY")
+                confidence = float(ml_result.get("confidence", 0.0))
 
-        print("ML Prediction:", prediction, "| confidence:", confidence)
+                signals = ml_result.get("signals", {})
+                if_signal = signals.get("isolation_forest", {}).get("anomaly", False)
+                xgb_signal = signals.get("xgboost", {}).get("anomaly", False)
 
-        final_alerts = [a.copy() for a in alerts]
+                final_alerts = [a.copy() for a in alerts]
 
-        # ================================
-        # 🔀 ML + RULE FUSION
-        # ================================
-        if prediction == "ANOMALY":
-            ML_ANOMALIES.inc()
+                # -------------------------------
+                # ML FUSION (STRICT)
+                # -------------------------------
+                if prediction == "ANOMALY":
+                    ML_ANOMALIES.inc()
 
-            if not alerts:
-                if confidence > 0.7:
-                    ML_ONLY_ALERTS.inc()
+                    if not alerts and confidence > 0.88 and (
+                            features["avg_latency"] > 380 or
+                            features["error_rate"] > 0.6
+                    ):
+                        ML_ONLY_ALERTS.inc()
 
-                    final_alerts.append({
-                        "type": "ML_ONLY_ANOMALY",
-                        "severity": "HIGH",
-                        "confidence": confidence,
-                        "details": features,
-                    })
+                        final_alerts.append({
+                            "type": "ML_ONLY_ANOMALY",
+                            "severity": "HIGH",
+                            "confidence": confidence,
+                        })
+                    else:
+                        SUPPRESSED_ML.inc()
+
                 else:
-                    SUPPRESSED_ML.inc()
-                    print(f"ML anomaly suppressed (low confidence): {confidence}")
+                    if if_signal or xgb_signal:
+                        SUPPRESSED_ML.inc()
 
-            else:
-                for alert in final_alerts:
-                    alert["ml_confirmed"] = True
+                # -------------------------------
+                # SCORING
+                # -------------------------------
+                score = scorer.compute_score(
+                    features,
+                    final_alerts,
+                    prediction,
+                    confidence
+                )
 
-        # ================================
-        # 📊 SCORING + DECISION
-        # ================================
-        score = scorer.compute_score(
-            features,
-            final_alerts,
-            prediction,
-            confidence
-        )
+                severity = scorer.get_severity(score)
 
-        severity = scorer.get_severity(score)
-        action = determine_action(severity)
+                # prevent ML-only critical escalation
+                if not alerts and prediction == "ANOMALY" and severity == "CRITICAL":
+                    severity = "HIGH"
 
-        # ================================
-        # 📦 FINAL INCIDENT
-        # ================================
-        incident = {
-            "score": score,
-            "severity": severity,
-            "action": action,
-            "features": features,
-            "alerts": final_alerts,
-            "ml_signal": {
-                "prediction": prediction,
-                "confidence": confidence,
-            },
-        }
+                action = determine_action(severity)
 
-        print("🔥 INCIDENT:", incident)
+                # -------------------------------
+                # EXPLAINABILITY (FINAL)
+                # -------------------------------
+                reason = generate_reason(features)
 
-        # ================================
-        # 🚨 ALERT OUTPUT
-        # ================================
-        if final_alerts:
-            ALERTS_TRIGGERED.inc()
-            print("🚨 FINAL ALERT:", final_alerts)
+                if not reason:
+                    if prediction == "ANOMALY":
+                        reason = {"note": "ML-detected anomaly without strong rule trigger"}
+                    else:
+                        reason = {"note": "No significant anomalies detected"}
+
+                # -------------------------------
+                # INCIDENT
+                # -------------------------------
+                incident = {
+                    "score": score,
+                    "severity": severity,
+                    "action": action,
+                    "features": features,
+                    "alerts": final_alerts,
+                    "ml_signal": {
+                        "prediction": prediction,
+                        "confidence": confidence,
+                    },
+                    "reason": reason
+                }
+
+                print("\n🔥 INCIDENT")
+                print(json.dumps(incident, indent=2))
+
+                if final_alerts:
+                    ALERTS_TRIGGERED.inc()
+                    print("🚨 FINAL ALERT:", final_alerts)
+
+            except Exception as e:
+                print("⚠️ Processing error:", str(e))
+
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down processor gracefully...")
 
 
 if __name__ == "__main__":
