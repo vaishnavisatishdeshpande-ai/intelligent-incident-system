@@ -2,48 +2,22 @@ import pandas as pd
 
 
 def load_nab_data(path):
-    """
-    Load NAB dataset and generate realistic system signals
-    using data-driven thresholds.
-    """
-
     df = pd.read_csv(path)
 
-    # Rename
-    df = df.rename(columns={
-        "value": "latency"
-    })
+    df = df.rename(columns={"value": "avg_latency"})
+    df["avg_latency"] = df["avg_latency"] * 500
 
-    # Normalize
-    df["latency"] = df["latency"] / df["latency"].max() * 500
+    df["latency_change"] = df["avg_latency"].diff().fillna(0)
 
-    # -----------------------------
-    # 🔥 DATA-DRIVEN THRESHOLDS
-    # -----------------------------
+    df["rolling_mean"] = df["avg_latency"].rolling(10).mean().fillna(df["avg_latency"])
+    df["rolling_std"] = df["avg_latency"].rolling(10).std().fillna(0)
 
-    high_threshold = df["latency"].quantile(0.90)
-    extreme_threshold = df["latency"].quantile(0.95)
+    df["error_rate"] = df["rolling_std"] / (df["rolling_mean"] + 1)
 
-    # -----------------------------
-    # Features
-    # -----------------------------
-
-    # Error = high spike
-    df["error"] = (df["latency"] > high_threshold).astype(int)
-
-    # Rolling mean for temporal behavior
-    df["rolling_mean"] = df["latency"].rolling(window=5).mean()
-
-    # Failure = extreme + sustained
     df["failure"] = (
-        (df["latency"] > extreme_threshold) &
-        (df["rolling_mean"] > high_threshold)
+        (df["avg_latency"] > df["rolling_mean"] * 1.5) |
+        (df["latency_change"] > 50) |
+        (df["error_rate"] > 0.3)
     ).astype(int)
 
-    # Clean NaNs
-    df = df.dropna()
-
-    # Final schema
-    df = df[["latency", "error", "failure"]]
-
-    return df
+    return df[["avg_latency", "error_rate", "latency_change", "failure"]]

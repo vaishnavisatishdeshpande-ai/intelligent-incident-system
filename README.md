@@ -1,183 +1,229 @@
 # Intelligent Incident Detection System
 
-A real-time anomaly detection system designed to reduce alert noise, explain decisions, and behave reliably under production-like conditions.
+A real-time observability and anomaly detection system that combines streaming data processing, rule-based detection, and machine learning with explainable reasoning.
 
 ---
 
-## Problem
+## Overview
 
-Modern systems generate continuous streams of metrics (latency, error rate, etc.).
-Typical alerting systems fail because they:
+Modern production systems generate high-volume telemetry data, but detecting meaningful incidents remains challenging due to noise, drift, and evolving system behavior.
 
-* trigger too often (high false positives)
-* lack clear reasoning
-* cannot handle noisy, real-world signals
+This project implements a **hybrid observability system** that:
 
-The goal is not just to detect anomalies, but to decide **when to act** and **why it matters**.
-
----
-
-## Approach
-
-This system combines:
-
-* rule-based detection (deterministic signals)
-* machine learning (pattern detection)
-* strict decision control (noise reduction)
-* explainability (human-readable reasoning)
+* Processes live system signals
+* Learns normal behavior dynamically
+* Detects anomalies using both rules and machine learning
+* Explains *why* a decision was made
+* Outputs actionable decisions, not just predictions
 
 ---
 
-## Architecture
+## System Design
 
-Event Stream → Feature Engine → Rule Engine + ML → Fusion → Scoring → Action
+The system follows a structured pipeline:
 
-### Components
+```
+stream → feature engineering → baseline modeling → rule detection → ML prediction → reasoning → decision
+```
 
-* **Producer**: generates or ingests metrics (latency, error rate)
-* **Kafka**: streaming pipeline for decoupled processing
-* **Feature Engine**: computes rolling averages
-* **Rule Engine**: detects threshold-based issues
-* **ML Layer**:
+### Core Components
 
-  * Isolation Forest → unknown anomalies
-  * XGBoost → learned failure patterns
-* **Fusion Layer**: combines signals with strict gating
-* **Scoring**: assigns severity (LOW → CRITICAL)
-* **Explainability**: explains why alerts occur
-* **Observability**: Prometheus + Grafana
+**1. Streaming Processor**
+
+* Consumes events continuously
+* Maintains sliding window for feature computation
+
+**2. Feature Engine**
+
+* Computes:
+
+  * avg_latency
+  * error_rate
+  * latency_change
+  * rolling_mean / rolling_std
+* Maintains adaptive baseline using exponential smoothing
+
+**3. Rule-Based Detection**
+
+* Detects threshold breaches
+* Tracks sustained anomalies
+* Prevents alert flapping
+
+**4. Machine Learning Layer**
+
+* XGBoost classifier trained on engineered signals
+* Learns complex failure patterns beyond rules
+* Handles non-linear relationships
+
+**5. Reasoning Engine**
+
+* Aligns every alert with a clear explanation
+* Filters weak signals
+* Outputs only meaningful deviations
+
+**6. Decision Engine**
+
+* Converts signals into actions:
+
+| Severity | Action             |
+| -------- | ------------------ |
+| LOW      | NO_ACTION          |
+| MEDIUM   | LOG_AND_MONITOR    |
+| HIGH     | TRIGGER_ALERT      |
+| CRITICAL | ESCALATE_TO_ONCALL |
+
+---
+
+## Key Idea
+
+The system is not purely rule-based and not purely ML-driven.
+
+It is a **hybrid system** designed for reliability:
+
+* Rules ensure safety and deterministic detection
+* ML captures complex and unknown patterns
+* Reasoning ensures transparency and trust
 
 ---
 
 ## Dataset
 
-Uses real-world time-series data:
+The system uses real-world time-series data derived from cloud infrastructure metrics.
 
-* NAB (Numenta Anomaly Benchmark)
-* AWS CloudWatch CPU metrics
+Dataset characteristics:
 
-Why:
+* Time-series CPU utilization data
+* Converted into latency-style signals
+* Features engineered from real behavior:
 
-* realistic noise patterns
-* suitable for anomaly detection
-* closer to production behavior than synthetic data
+  * trend (latency_change)
+  * variability (error_rate)
+  * baseline deviation
+
+Failure labels are **behavior-driven**, not manually annotated, simulating real observability environments.
 
 ---
 
-## Design Principles
+## Model Evaluation
 
-### 1. Signal over Noise
+The model is evaluated using standard classification metrics:
 
-Only meaningful anomalies should trigger alerts.
+* Accuracy
+* Precision
+* Recall
+* F1 Score
+* ROC-AUC
 
-### 2. ML is Assistive
+### Results
 
-ML supports decisions, it does not override system logic.
+```
+Accuracy  : 0.9888
+Precision : 0.9611
+Recall    : 0.9886
+F1 Score  : 0.9746
+ROC-AUC   : 0.9999
+```
 
-### 3. Controlled Alerting
+### Important Note
 
-High severity requires strong evidence.
+Evaluation is performed on **proxy labels derived from system behavior**, not manually labeled failures.
 
-### 4. Explainability
+The focus is not absolute accuracy, but **learning meaningful patterns from signals**.
 
-Every alert includes a reason.
+---
 
-### 5. Failure Awareness
+## Design Trade-Off
 
-System handles:
+The system prioritizes:
 
-* missing data
-* ML not ready
-* noisy inputs
+```
+High Recall > High Precision
+```
+
+This ensures:
+
+* Critical failures are not missed
+* Some false positives are acceptable in exchange for safety
+
+This trade-off reflects real-world production systems.
 
 ---
 
 ## System Behavior
 
-* Normal traffic → no alerts
-* Sustained latency → HIGH
-* Error spikes → HIGH / CRITICAL
-* ML-only anomalies → rare and gated
-* Weak signals → suppressed
+| Scenario            | Input Pattern             | Output Behavior |
+| ------------------- | ------------------------- | --------------- |
+| Stable system       | Low variance              | No alerts       |
+| Gradual degradation | Slowly increasing latency | Medium severity |
+| Sudden spike        | Sharp latency increase    | High severity   |
+| Error surge         | High error_rate           | High / Critical |
+| ML anomaly          | Pattern unseen in rules   | ML-based alert  |
 
 ---
 
-## Trade-offs
+## Why This System Stands Out
 
-* **Streaming vs Batch**
-  Chosen: streaming (real-time)
-  Trade-off: higher complexity
+Most projects:
 
-* **Rules vs ML**
-  Chosen: hybrid
-  Trade-off: more coordination
+* Train a model
+* Output predictions
 
-* **Sliding Window vs Full History**
-  Chosen: sliding window
-  Trade-off: less long-term memory
+This system:
 
-* **Strict Gating vs Recall**
-  Chosen: strict gating
-  Trade-off: may miss weak anomalies
+* Models system behavior
+* Detects anomalies in context
+* Explains decisions
+* Produces actions
 
----
+It demonstrates:
 
-## Metrics
-
-* events_processed_total
-* alerts_triggered_total
-* ml_anomalies_total
-* ml_only_alerts_total
-* ml_suppressed_total
-* avg_latency
-* error_rate
+* System design thinking
+* Signal vs noise handling
+* Failure detection strategy
+* Explainability in ML systems
 
 ---
 
-## Results
+## Future Improvements
 
-* reduced alert noise
-* controlled ML behavior
-* improved interpretability
-* realistic severity progression
-
----
-
-## Research Basis
-
-Inspired by concepts from:
-
-* IEEE research on anomaly detection and system reliability
-* streaming anomaly detection techniques
-* hybrid ML + rule-based systems
-* signal vs noise trade-offs
+* Integration with feature store for consistent training/inference
+* Online learning for continuous adaptation
+* Multi-metric correlation (CPU, memory, network)
+* Real incident datasets for stronger evaluation
+* Alert prioritization using impact scoring
 
 ---
 
-## Future Work
+## Conclusion
 
-* real production data ingestion
-* adaptive thresholds
-* online learning
-* distributed deployment
-* cross-service correlation
+This project demonstrates how to build an **intelligent observability system**, not just a machine learning model.
+
+It combines:
+
+* streaming systems
+* feature engineering
+* anomaly detection
+* explainable reasoning
+* decision-making
+
+The result is a system that behaves closer to real production monitoring platforms.
 
 ---
 
-## Key Insight
+## Running the System
 
-Detecting anomalies is easy.
-Building a system that engineers trust is hard.
+Train the model:
+
+```
+python -m services.model.train_model
+```
+
+Run the processor:
+
+```
+python -m services.processor.processor
+```
 
 ---
 
-## Summary
-
-This project demonstrates:
-
-* system design thinking
-* ML + backend integration
-* real-time processing
-* explainable decision-making
-
-It is designed to behave like a production system, not a demo.
+This project focuses on clarity of thinking, system behavior, and meaningful signal extraction — the core of real-world backend intelligence systems.
