@@ -1,69 +1,104 @@
 # Intelligent Incident Detection System
 
-A real-time observability and anomaly detection system that combines streaming data processing, rule-based detection, and machine learning with explainable reasoning.
+A real-time system that detects anomalies, explains why they occur, and decides what action to take.
 
 ---
 
-## Overview
+## Example Output
 
-Modern production systems generate high-volume telemetry data, but detecting meaningful incidents remains challenging due to noise, drift, and evolving system behavior.
+```json
+{
+  "incident_id": "INC_1023",
+  "prediction": "ANOMALY",
+  "severity": "HIGH",
+  "confidence": 0.91,
+  "reason": {
+    "latency": "2.05x baseline",
+    "error_rate": "+0.18 over baseline",
+    "ml_signal": "pattern deviation detected"
+  },
+  "decision": "trigger alert + monitor system"
+}
+```
 
-This project implements a **hybrid observability system** that:
-
-* Processes live system signals
-* Learns normal behavior dynamically
-* Detects anomalies using both rules and machine learning
-* Explains *why* a decision was made
-* Outputs actionable decisions, not just predictions
+This is not just detection.
+This is **explainable, decision-driven system behavior**.
 
 ---
 
-## System Design
+## Problem
 
-The system follows a structured pipeline:
+Traditional monitoring systems rely on:
+
+* static thresholds
+* isolated metrics
+* manual interpretation
+
+They fail to:
+
+* capture evolving system behavior
+* detect complex failure patterns
+* provide actionable insights
+
+Result:
+
+* missed failures
+* alert noise
+* delayed response
+
+---
+
+## Approach
+
+This system combines:
+
+* dynamic baselines
+* rule-based detection
+* machine learning
+* reasoning
+
+Pipeline:
 
 ```
-stream → feature engineering → baseline modeling → rule detection → ML prediction → reasoning → decision
+stream → features → baseline → rules → ML → reasoning → decision
 ```
 
-### Core Components
+Each stage transforms raw signals into structured decisions.
 
-**1. Streaming Processor**
+---
 
-* Consumes events continuously
-* Maintains sliding window for feature computation
+## Core Components
 
-**2. Feature Engine**
+**Feature Engine**
 
-* Computes:
+* avg_latency
+* latency_change
+* error_rate
+* rolling baseline
 
-  * avg_latency
-  * error_rate
-  * latency_change
-  * rolling_mean / rolling_std
-* Maintains adaptive baseline using exponential smoothing
+**Baseline Modeling**
 
-**3. Rule-Based Detection**
+* slow adaptation
+* prevents drift masking
 
-* Detects threshold breaches
-* Tracks sustained anomalies
-* Prevents alert flapping
+**Rule Engine**
 
-**4. Machine Learning Layer**
+* threshold breaches
+* sustained anomalies
+* noise control
 
-* XGBoost classifier trained on engineered signals
-* Learns complex failure patterns beyond rules
-* Handles non-linear relationships
+**ML Layer (XGBoost)**
 
-**5. Reasoning Engine**
+* learns non-linear patterns
+* detects unknown anomalies
 
-* Aligns every alert with a clear explanation
-* Filters weak signals
-* Outputs only meaningful deviations
+**Reasoning Engine**
 
-**6. Decision Engine**
+* aligns signals with causes
+* filters weak signals
+* produces explanations
 
-* Converts signals into actions:
+**Decision Engine**
 
 | Severity | Action             |
 | -------- | ------------------ |
@@ -74,47 +109,18 @@ stream → feature engineering → baseline modeling → rule detection → ML p
 
 ---
 
-## Key Idea
+## Key Design Choice
 
-The system is not purely rule-based and not purely ML-driven.
+```
+High Recall > High Precision
+```
 
-It is a **hybrid system** designed for reliability:
-
-* Rules ensure safety and deterministic detection
-* ML captures complex and unknown patterns
-* Reasoning ensures transparency and trust
-
----
-
-## Dataset
-
-The system uses real-world time-series data derived from cloud infrastructure metrics.
-
-Dataset characteristics:
-
-* Time-series CPU utilization data
-* Converted into latency-style signals
-* Features engineered from real behavior:
-
-  * trend (latency_change)
-  * variability (error_rate)
-  * baseline deviation
-
-Failure labels are **behavior-driven**, not manually annotated, simulating real observability environments.
+Critical failures must not be missed.
+False positives are acceptable within limits.
 
 ---
 
-## Model Evaluation
-
-The model is evaluated using standard classification metrics:
-
-* Accuracy
-* Precision
-* Recall
-* F1 Score
-* ROC-AUC
-
-### Results
+## Model Performance
 
 ```
 Accuracy  : 0.9888
@@ -124,101 +130,46 @@ F1 Score  : 0.9746
 ROC-AUC   : 0.9999
 ```
 
-### Important Note
-
-Evaluation is performed on **proxy labels derived from system behavior**, not manually labeled failures.
-
-The focus is not absolute accuracy, but **learning meaningful patterns from signals**.
-
----
-
-## Design Trade-Off
-
-The system prioritizes:
-
-```
-High Recall > High Precision
-```
-
-This ensures:
-
-* Critical failures are not missed
-* Some false positives are acceptable in exchange for safety
-
-This trade-off reflects real-world production systems.
+Evaluation is based on behavior-derived labels, not manually annotated incidents.
 
 ---
 
 ## System Behavior
 
-| Scenario            | Input Pattern             | Output Behavior |
-| ------------------- | ------------------------- | --------------- |
-| Stable system       | Low variance              | No alerts       |
-| Gradual degradation | Slowly increasing latency | Medium severity |
-| Sudden spike        | Sharp latency increase    | High severity   |
-| Error surge         | High error_rate           | High / Critical |
-| ML anomaly          | Pattern unseen in rules   | ML-based alert  |
+| Scenario            | Output              |
+| ------------------- | ------------------- |
+| Stable system       | No alerts           |
+| Gradual degradation | Medium severity     |
+| Sudden spike        | High severity       |
+| Error surge         | Critical escalation |
+| Unknown pattern     | ML-based anomaly    |
 
 ---
 
-## Why This System Stands Out
+## Why This Is Different
 
-Most projects:
+This is not:
 
-* Train a model
-* Output predictions
+* just a model
+* just a monitoring script
 
 This system:
 
-* Models system behavior
-* Detects anomalies in context
-* Explains decisions
-* Produces actions
-
-It demonstrates:
-
-* System design thinking
-* Signal vs noise handling
-* Failure detection strategy
-* Explainability in ML systems
+* models behavior
+* reasons about anomalies
+* produces decisions
 
 ---
 
-## Future Improvements
+## Run
 
-* Integration with feature store for consistent training/inference
-* Online learning for continuous adaptation
-* Multi-metric correlation (CPU, memory, network)
-* Real incident datasets for stronger evaluation
-* Alert prioritization using impact scoring
-
----
-
-## Conclusion
-
-This project demonstrates how to build an **intelligent observability system**, not just a machine learning model.
-
-It combines:
-
-* streaming systems
-* feature engineering
-* anomaly detection
-* explainable reasoning
-* decision-making
-
-The result is a system that behaves closer to real production monitoring platforms.
-
----
-
-## Running the System
-
-Train the model:
+Train model:
 
 ```
 python -m services.model.train_model
 ```
 
-Run the processor:
+Run processor:
 
 ```
 python -m services.processor.processor
@@ -226,4 +177,13 @@ python -m services.processor.processor
 
 ---
 
-This project focuses on clarity of thinking, system behavior, and meaningful signal extraction — the core of real-world backend intelligence systems.
+## Summary
+
+A system that:
+
+* understands signals
+* detects anomalies
+* explains decisions
+* takes action
+
+Designed to reflect real-world observability systems, not isolated ML pipelines.
