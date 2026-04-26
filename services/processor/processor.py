@@ -29,6 +29,7 @@ class FeatureEngine:
         self.events = deque(maxlen=WINDOW_SIZE)
         self.baseline_latency = None
         self.baseline_error = None
+        self.prev_avg_latency = None
 
     def add_event(self, event):
         if isinstance(event, dict):
@@ -44,6 +45,14 @@ class FeatureEngine:
         avg_latency = sum(latencies) / len(latencies)
         error_rate = sum(errors) / len(errors)
 
+        # ✅ ADD THIS (CRITICAL)
+        if self.prev_avg_latency is None:
+            latency_change = 0.0
+        else:
+            latency_change = avg_latency - self.prev_avg_latency
+
+        self.prev_avg_latency = avg_latency
+
         if self.baseline_latency is None:
             self.baseline_latency = avg_latency
             self.baseline_error = error_rate
@@ -55,10 +64,10 @@ class FeatureEngine:
         return {
             "avg_latency": avg_latency,
             "error_rate": error_rate,
+            "latency_change": latency_change,  # 🔥 THIS FIXES EVERYTHING
             "baseline_latency": self.baseline_latency,
             "baseline_error": self.baseline_error,
         }
-
 
 class AnomalyDetector:
     def __init__(self, latency_threshold=300, error_threshold=0.3):
@@ -229,18 +238,25 @@ def main():
 
                 engine.add_event(event)
                 features = engine.compute_features()
-
                 if not features:
                     continue
 
                 LATENCY_GAUGE.set(features["avg_latency"])
                 ERROR_RATE_GAUGE.set(features["error_rate"])
 
+                # -----------------------------
+                # Rule-based alerts
+                # -----------------------------
                 alerts = detector.detect(features)
                 alerts = [a for a in alerts if a.get("status") != "RESOLVED"]
 
+                # -----------------------------
+                # ML pipeline
+                # -----------------------------
                 model.add_data(features)
-                model.train()
+
+                if not model.if_trained and len(model.data) > 30:
+                    model.train()
 
                 ml_result = model.predict(features) or {}
 
@@ -251,27 +267,41 @@ def main():
                 if_signal = signals.get("isolation_forest", {}).get("anomaly", False)
                 xgb_signal = signals.get("xgboost", {}).get("anomaly", False)
 
+                # -----------------------------
+                # Merge alerts
+                # -----------------------------
                 final_alerts = [a.copy() for a in alerts]
 
                 if prediction == "ANOMALY":
                     ML_ANOMALIES.inc()
 
-                    if not alerts and confidence > 0.9 and (
-                        features["avg_latency"] > 400 or
-                        features["error_rate"] > 0.65
+                    if (
+                            confidence >= 0.9  # 🔥 FIXED
+                            or features["error_rate"] > 0.6
+                            or features["avg_latency"] > 400
                     ):
-                        ML_ONLY_ALERTS.inc()
+                        ml_severity = "HIGH"
+                    else:
+                        ml_severity = "MEDIUM"
+
+                    alert_type = "ML_ONLY_ANOMALY" if not alerts else "ML_ANOMALY"
+
+                    existing_ml = any(a["type"].startswith("ML") for a in final_alerts)
+
+                    if not existing_ml:
+                        if alert_type == "ML_ONLY_ANOMALY" and ml_severity == "HIGH":
+                            ML_ONLY_ALERTS.inc()
+
                         final_alerts.append({
-                            "type": "ML_ONLY_ANOMALY",
-                            "severity": "HIGH",
+                            "type": alert_type,
+                            "severity": ml_severity,
                             "confidence": confidence,
                         })
                     else:
                         SUPPRESSED_ML.inc()
-                else:
-                    if if_signal or xgb_signal:
-                        SUPPRESSED_ML.inc()
-
+                # -----------------------------
+                # Scoring + severity
+                # -----------------------------
                 score = scorer.compute_score(
                     features,
                     final_alerts,
@@ -281,13 +311,21 @@ def main():
 
                 severity = scorer.get_severity(score)
 
+                # prevent ML-only CRITICAL (too aggressive)
                 if not alerts and prediction == "ANOMALY" and severity == "CRITICAL":
                     severity = "HIGH"
 
                 action = determine_action(severity)
                 decision = determine_decision(severity)
 
-                reason = reason_generator.generate_reason(features, final_alerts, ml_result)
+                # -----------------------------
+                # Reasoning
+                # -----------------------------
+                reason = reason_generator.generate_reason(
+                    features,
+                    final_alerts,
+                    ml_result
+                )
 
                 incident = {
                     "score": score,
@@ -313,7 +351,6 @@ def main():
 
     except KeyboardInterrupt:
         print("Shutting down processor...")
-
 
 if __name__ == "__main__":
     main()
