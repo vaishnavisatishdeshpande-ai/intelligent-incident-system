@@ -58,6 +58,43 @@ A hybrid system that combines:
 * explainable reasoning
 
 ---
+## Motivation
+
+Modern distributed systems are complex and failure-prone.
+Failures are rare, hard to detect early, and often depend on multiple interdependent signals.
+
+This project explores how intelligent systems can:
+
+detect anomalies in real time
+reason about system behavior
+trigger meaningful actions
+improve reliability
+Research Inspiration
+
+This system is inspired by the paper:
+
+“Machine Learning-Based Fault Prediction in Large-Scale Distributed Systems”
+
+Key ideas from the paper:
+
+fault prediction is difficult due to system complexity and class imbalance
+feature engineering and preprocessing are critical
+ensemble models (XGBoost, LightGBM, Voting) perform strongly
+recall is important to avoid missing failures
+
+While the paper focuses on offline fault prediction using historical cluster traces, this system explores how those ideas translate to real-time, streaming environments where decisions must be made under latency and reliability constraints.
+
+
+## Research → System Extension
+
+This project extends research on ML-based fault prediction (typically offline)
+into a real-time system.
+
+It explores how:
+
+offline ML models → streaming detection → system-level decisions
+
+can be implemented in a production-style architecture.
 
 ## System Pipeline
 
@@ -255,15 +292,22 @@ Ensures:
 ---
 
 ## Model Performance
-
+Designed to reduce alert noise and enable faster incident response through
+real-time detection and explainable decision-making.
 ```
 Accuracy  : 0.9963
 Precision : 0.9831
 Recall    : 1.0
 F1 Score  : 0.9915
 ROC-AUC   : 1.0
-```
 
+```
+Note: These results are obtained under a controlled dataset setup.
+In real-world distributed systems, data distribution, noise, and evolving patterns can impact performance, and the focus shifts toward robustness, latency, and recall under streaming conditions.
+
+This system reflects how modern data platforms operate—processing continuous
+streams, applying intelligence, and producing decisions under strict latency
+and reliability constraints.
 ---
 
 ## System Behavior
@@ -278,11 +322,55 @@ ROC-AUC   : 1.0
 
 ---
 
+
+## System Design Principles
+
+This system is designed with production-style backend principles:
+
+• Real-time processing  
+Processes streaming signals instead of static batch data  
+
+• Separation of concerns  
+Feature extraction, detection, reasoning, and decision layers are independent  
+
+• Hybrid intelligence  
+Combines rule-based reliability with ML adaptability  
+
+• Explainability-first design  
+Every anomaly must include a clear reason  
+
+• Recall-first strategy  
+Prioritizes detecting all critical failures over minimizing false positives  
+
+• Observability built-in  
+Metrics and system behavior are continuously monitored via Prometheus and Grafana  
+
+---
+
+
 ## Performance
 
 * ~100 events/sec throughput
 * ~120 ms detection latency
 * ~60% alert noise reduction
+
+---
+
+
+## Data Flow & Scalability
+
+Data flows through the system as a continuous stream:
+
+events → features → detection → reasoning → decision → metrics
+
+The system is designed to support:
+
+• High-throughput event streams  
+• Low-latency decision making  
+• Stateless processing components  
+• Horizontal scalability (future Kafka + Kubernetes integration)  
+
+This mirrors real-world data systems where millions of events are processed continuously.
 
 ---
 
