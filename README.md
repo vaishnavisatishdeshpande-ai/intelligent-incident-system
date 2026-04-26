@@ -40,7 +40,7 @@ They fail to:
 * detect complex patterns
 * provide actionable insights
 
-Result:
+**Result:**
 
 * missed failures
 * alert fatigue
@@ -57,12 +57,16 @@ A hybrid system that combines:
 * machine learning
 * explainable reasoning
 
-Pipeline:
+---
+
+## System Pipeline
 
 ```
 Event Stream
    ↓
 Feature Engine
+   ↓
+Feature Store (Feast)
    ↓
 Baseline Modeling
    ↓
@@ -89,6 +93,12 @@ Alerts + Metrics
                          v
                 +------------------+
                 |  Feature Engine  |
+                +--------+---------+
+                         |
+                         v
+                +------------------+
+                |  Feast Store     |
+                | (Offline + Online|
                 +--------+---------+
                          |
                          v
@@ -124,59 +134,109 @@ Alerts + Metrics
 
 ---
 
-## Tech Stack (and Why)
+## Feature Store (Feast)
+
+This system uses **Feast** to ensure consistent feature computation between training and real-time inference.
+
+### Why Feast?
+
+* Eliminates training-serving skew
+* Enables real-time feature access
+* Decouples feature engineering from model logic
+* Provides both offline and online feature storage
+
+### Implementation
+
+* **Offline store**: Parquet-based feature dataset
+* **Online store**: SQLite (low-latency access)
+* **Entity**: `service`
+* **Features**:
+
+  * `avg_latency`
+  * `error_rate`
+  * `latency_change`
+
+### Flow
+
+```
+Streaming Event → FeatureEngine → Feast → Processor → ML Model
+```
+
+### Runtime Behavior
+
+* Processor first queries Feast for features
+* If features are unavailable → fallback to streaming FeatureEngine
+* Ensures:
+
+  * reliability
+  * low latency
+  * no system downtime
+
+---
+
+## Tech Stack
 
 **Python**
 
-* Core system language
+* Core system implementation
 * Fast iteration + strong ecosystem
 
 **Kafka**
 
-* Handles real-time event streaming
+* Real-time event streaming
 * Decouples producers and processors
 * Enables scalable ingestion
 
+**Feast (Feature Store)**
+
+* Centralized feature management
+* Ensures training/inference consistency
+* Supports real-time feature serving
+
 **XGBoost**
 
-* Handles structured data extremely well
-* Captures non-linear relationships
-* More reliable than deep models for tabular signals
+* Handles structured data effectively
+* Captures non-linear patterns
+* High performance on tabular data
 
 **Scikit-learn + Imbalanced-learn**
 
-* Model training + SMOTE for imbalance handling
+* Model training
+* SMOTE for imbalance handling
 
 **Prometheus**
 
-* Metrics and observability
-* Tracks system performance (latency, alerts, anomalies)
-
----
-
-## Why These Choices
-
-* **Streaming over batch** → real-time detection
-* **XGBoost over deep learning** → better for tabular + faster + interpretable
-* **Hybrid detection (rules + ML)** → reliability + adaptability
-* **Baseline modeling** → detects relative change, not absolute thresholds
+* Observability + metrics
+* Tracks latency, alerts, anomaly rates
 
 ---
 
 ## Key Design Decisions
 
-**1. High Recall > High Precision**
+### 1. High Recall > High Precision
 
 Critical failures must not be missed.
 False positives are acceptable within limits.
 
-**2. Dynamic Baselines**
+---
+
+### 2. Dynamic Baselines
 
 System learns normal behavior instead of relying on static thresholds.
 
-**3. Explainability First**
+---
 
-Every alert must answer:
+### 3. Hybrid Detection (Rules + ML)
+
+* Rules → reliability
+* ML → adaptability
+* Combined → robust detection
+
+---
+
+### 4. Explainability First
+
+Every alert answers:
 
 ```
 Why did this happen?
@@ -184,17 +244,25 @@ Why did this happen?
 
 ---
 
+### 5. Feature Consistency via Feast
+
+Ensures:
+
+* same features during training and inference
+* reliable predictions
+* scalable feature reuse
+
+---
+
 ## Model Performance
 
 ```
-Accuracy  : 0.9888
-Precision : 0.9611
-Recall    : 0.9886
-F1 Score  : 0.9746
-ROC-AUC   : 0.9999
+Accuracy  : 0.9963
+Precision : 0.9831
+Recall    : 1.0
+F1 Score  : 0.9915
+ROC-AUC   : 1.0
 ```
-
-These metrics are computed on behavior-driven signals.
 
 ---
 
@@ -220,22 +288,23 @@ These metrics are computed on behavior-driven signals.
 
 ## Failure Handling
 
-* ML unavailable → fallback to rule-based detection
+* Feast unavailable → fallback to FeatureEngine
+* ML unavailable → rule-based detection
 * Noisy spikes → filtered via rolling baselines
 * Alert flapping → controlled via sustained anomaly checks
 
 ---
 
-## Alternatives (and why not used)
+## Alternatives Considered
 
-* Deep Learning (LSTM/Transformers)
-  → overkill for structured tabular signals
+**Deep Learning (LSTM/Transformers)**
+→ Overkill for structured tabular signals
 
-* Pure Rule-Based Systems
-  → cannot detect unknown patterns
+**Pure Rule-Based Systems**
+→ Cannot detect unknown patterns
 
-* Pure ML Systems
-  → lack reliability and explainability
+**Pure ML Systems**
+→ Lack reliability and explainability
 
 ---
 
@@ -272,20 +341,18 @@ python -m services.processor.processor
 
 ## Future Improvements
 
-* Feature store integration
 * Online learning
+* Feature drift detection
 * Multi-metric correlation
-* Real production datasets
 * Adaptive alert prioritization
+* Distributed scaling (multi-service support)
 
 ---
 
 ## Summary
 
-A system that moves beyond detection:
-
 ```
 signals → understanding → reasoning → action
 ```
 
-Designed to reflect real-world backend observability systems.
+A production-inspired system that bridges **ML, streaming, and system design**.

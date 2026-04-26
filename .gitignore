@@ -1,5 +1,16 @@
 .venv/
 __pycache__/
 *.pyc
-.env
-.idea
+
+# Feast
+*.db
+*.sqlite
+feature_repo/feature_repo/online_store.db
+feature_repo/feature_repo/registry.db
+
+# Data
+data/*.parquet
+feature_repo/feature_repo/data/
+
+# OS
+.DS_Store
