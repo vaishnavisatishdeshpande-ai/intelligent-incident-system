@@ -1,5 +1,9 @@
 # Intelligent Incident Detection System
 
+In high-stakes production environments, monitoring systems tell you what already broke. But in real oncall situations — heap exhaustion creeping up, Kafka consumer lag building, latency degrading slowly — by the time the alert fires, the damage is done.
+I worked in environments where the response to recurring failures was always the same: patch it, increase the limit, move on. The system had no way to signal distress before it broke.
+This system is built to change that.
+
 A real-time, behavior-aware observability system that detects anomalies, explains why they occur, and decides what action to take.
 
 ---
